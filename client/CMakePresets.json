@@ -1,0 +1,62 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "Visual Studio Community 2022 Release - x86_amd64",
+      "displayName": "Visual Studio Community 2022 Release - x86_amd64",
+      "description": "Using compilers for Visual Studio 17 2022 (x86_x64 architecture)",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "host=x86",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/install",
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_PREFIX_PATH": "J:/QTSRC/build"
+      }
+    },
+    {
+      "name": "linux",
+      "displayName": "linux-config",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/bin",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/install",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "hidden": true,
+      "name": "Qt",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}"
+      },
+      "vendor": {
+        "qt-project.org/Qt": {
+          "checksum": "wVa86FgEkvdCTVp1/nxvrkaemJc="
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "Visual Studio Community 2022 Release - x86_amd64-debug",
+      "displayName": "Visual Studio Community 2022 Release - x86_amd64 - Debug",
+      "configurePreset": "Visual Studio Community 2022 Release - x86_amd64",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "configuration": "Debug"
+    }
+  ],
+  "vendor": {
+    "qt-project.org/Presets": {
+      "checksum": "RdBZkbdID0Mm5Vndy9a3X08l2yM="
+    }
+  }
+}
