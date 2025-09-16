@@ -8,8 +8,6 @@
 #include "gluethread/glthread.h"
 
 extern graph_t *topo;
-extern int tcp_sock;
-
 
 /* A buffer used to store the data to be written into
  * logging files when pkt is receieved. For writing a
@@ -37,7 +35,7 @@ string_ethernet_hdr_type(unsigned short type){
         case ETH_IP:
             strncpy(string_buffer, "ETH_IP", strlen("ETH_IP"));
             break;
-        case ARP_MSG:
+        case PROTO_ARP:
             strncpy(string_buffer, "ARP_MSG", strlen("ARP_MSG"));
             break;
         case DDCP_MSG_TYPE_FLOOD_QUERY:
@@ -49,6 +47,7 @@ string_ethernet_hdr_type(unsigned short type){
 				strlen("NMP_HELLO_MSG_CODE"));
 			break;
         default:
+            sprintf(string_buffer, "L2 Proto : %hu", type);
             break;
     }
     return string_buffer;
@@ -210,7 +209,7 @@ tcp_dump_ethernet_hdr(char *buff, ethernet_hdr_t *eth_hdr,
                     (ip_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr),
                      payload_size);
             break;
-        case ARP_MSG:
+        case PROTO_ARP:
             rc += tcp_dump_arp_hdr(buff + rc,
                     (arp_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr),
                     payload_size);
@@ -317,11 +316,8 @@ tcp_dump_recv_logger(node_t *node, interface_t *intf,
         node->log_info.recv ||
         intf->log_info.recv){
 
-        // int sock_fd = (topo->gstdout && (node->log_info.is_stdout || 
-                        // intf->log_info.is_stdout)) ? STDOUT_FILENO : -1;
-
-        
-        int sock_fd = tcp_sock;
+        int sock_fd = (topo->gstdout && (node->log_info.is_stdout || 
+                        intf->log_info.is_stdout)) ? STDOUT_FILENO : -1;
         
         FILE *log_file1 = (node->log_info.all || node->log_info.recv) ?
                 node->log_info.log_file : NULL;
@@ -388,10 +384,8 @@ tcp_dump_send_logger(node_t *node, interface_t *intf,
          node->log_info.send ||
          intf->log_info.send){
 
-        // int sock_fd = (topo->gstdout && (node->log_info.is_stdout || 
-                        // intf->log_info.is_stdout)) ? STDOUT_FILENO : -1;
-
-        int sock_fd = tcp_sock;
+        int sock_fd = (topo->gstdout && (node->log_info.is_stdout || 
+                        intf->log_info.is_stdout)) ? STDOUT_FILENO : -1;
 
         FILE *log_file1 = (node->log_info.all || node->log_info.send) ?
                 node->log_info.log_file : NULL;
@@ -465,16 +459,16 @@ void
 tcp_ip_init_node_log_info(node_t *node){
 
     log_t *log_info     = &node->log_info;
-    log_info->all       = FALSE;
-    log_info->recv      = FALSE;
-    log_info->send      = FALSE;
-    log_info->is_stdout = FALSE;
-    log_info->l3_fwd    = FALSE;
+    log_info->all       = false;
+    log_info->recv      = false;
+    log_info->send      = false;
+    log_info->is_stdout = false;
+    log_info->l3_fwd    = false;
     log_info->log_file  = initialize_node_log_file(node); 
 }
 
 void
-tcp_ip_set_all_log_info_params(log_t *log_info, bool_t status){
+tcp_ip_set_all_log_info_params(log_t *log_info, bool status){
 
     log_info->all    = status;
     log_info->recv   = status;
@@ -489,10 +483,10 @@ void
 tcp_ip_init_intf_log_info(interface_t *intf){
     
     log_t *log_info     = &intf->log_info;
-    log_info->all       = TRUE;
-    log_info->recv      = TRUE;
-    log_info->send      = TRUE;
-    log_info->is_stdout = TRUE;
+    log_info->all       = false;
+    log_info->recv      = false;
+    log_info->send      = false;
+    log_info->is_stdout = false;
     log_info->log_file  = initialize_interface_log_file(intf);
 }
 
@@ -583,19 +577,19 @@ int traceoptions_handler(param_t *param,
 
     switch(CMDCODE){
         case CMDCODE_DEBUG_GLOBAL_STDOUT:
-            topo->gstdout = TRUE;
+            topo->gstdout = true;
             break;
         case CMDCODE_DEBUG_GLOBAL_NO_STDOUT:
-            topo->gstdout = FALSE;
+            topo->gstdout = false;
             break;
         case CMDCODE_DEBUG_LOGGING_PER_NODE:
         case CMDCODE_DEBUG_SHOW_LOG_STATUS:
-            node =  get_node_by_node_name(topo, node_name);
+            node =  node_get_node_by_name(topo, node_name);
             log_info = &node->log_info;
         break;
         case CMDCODE_DEBUG_LOGGING_PER_INTF:
-            node =  get_node_by_node_name(topo, node_name);
-            intf = get_node_if_by_name(node, if_name);
+            node =  node_get_node_by_name(topo, node_name);
+            intf = node_get_intf_by_name(node, if_name);
             if(!intf){
                 printf("Error : No interface %s on Node %s\n", if_name, node_name);
                 return -1;
@@ -609,10 +603,10 @@ int traceoptions_handler(param_t *param,
     if(CMDCODE == CMDCODE_DEBUG_LOGGING_PER_NODE ||
             CMDCODE == CMDCODE_DEBUG_LOGGING_PER_INTF){
         if(strcmp(flag_val, "all") == 0){
-            tcp_ip_set_all_log_info_params(log_info, TRUE);
+            tcp_ip_set_all_log_info_params(log_info, true);
         }
         else if(strcmp(flag_val, "no-all") == 0){
-            tcp_ip_set_all_log_info_params(log_info, FALSE);
+            tcp_ip_set_all_log_info_params(log_info, false);
             
             /*disable logging for all interfaces also*/
             if(CMDCODE == CMDCODE_DEBUG_LOGGING_PER_NODE){
@@ -621,33 +615,33 @@ int traceoptions_handler(param_t *param,
                 for(; i < MAX_INTF_PER_NODE; i++){
                     intf = node->intf[i];
                     if(!intf) continue;
-                    tcp_ip_set_all_log_info_params(&intf->log_info, FALSE);
+                    tcp_ip_set_all_log_info_params(&intf->log_info, false);
                 }
             }
         }
         else if(strcmp(flag_val, "recv") == 0){
-            log_info->recv = TRUE;
+            log_info->recv = true;
         }
         else if(strcmp(flag_val, "no-recv") == 0){
-            log_info->recv = FALSE;
+            log_info->recv = false;
         }
         else if(strcmp(flag_val, "send") == 0){
-            log_info->send = TRUE;
+            log_info->send = true;
         }
         else if(strcmp(flag_val, "no-send") == 0){
-            log_info->send = FALSE;
+            log_info->send = false;
         }
         else if(strcmp(flag_val, "stdout") == 0){
-            log_info->is_stdout = TRUE;
+            log_info->is_stdout = true;
         }
         else if(strcmp(flag_val, "no-stdout") == 0){
-            log_info->is_stdout = FALSE;
+            log_info->is_stdout = false;
         }
         else if(strcmp(flag_val, "l3-fwd") == 0){
-            log_info->l3_fwd = TRUE;
+            log_info->l3_fwd = true;
         }
         else if(strcmp(flag_val, "no-l3-fwd") == 0){
-            log_info->l3_fwd = FALSE;
+            log_info->l3_fwd = false;
         }
     }
     else if(CMDCODE == CMDCODE_DEBUG_SHOW_LOG_STATUS){
@@ -720,4 +714,62 @@ void
 tcp_init_send_logging_buffer(node_t *node){
 
     memset(TCP_GET_NODE_SEND_LOG_BUFFER(node), 0, TCP_PRINT_BUFFER_SIZE);
+}
+
+/* TCP Internal Logging */
+static FILE *tcp_log_file;
+char tlb[TCP_LOG_BUFFER_LEN];
+
+void
+init_tcp_logging() {
+
+    tcp_log_file = fopen("logs/tcp_log_file", "w");
+    assert(tcp_log_file);
+    memset(tlb, 0, sizeof(tlb));
+}
+
+void 
+tcp_trace_internal(node_t *node,
+			   interface_t *interface, 
+			   char *buff, const char *fn, int lineno) {
+
+	char lineno_str[16];
+
+	fwrite(fn, sizeof(char), strlen(fn), tcp_log_file);
+	memset(lineno_str, 0, sizeof(lineno_str));
+	sprintf(lineno_str, " (%u) :", lineno);
+	fwrite(lineno_str, sizeof(char), strlen(lineno_str), tcp_log_file);	
+
+	if (node) {
+		fwrite(node->node_name, sizeof(char), strlen(node->node_name), tcp_log_file);
+		fwrite(":", sizeof(char), 1, tcp_log_file);
+	}
+	if (interface) {
+		fwrite(interface->if_name, sizeof(char), strlen(interface->if_name), tcp_log_file);
+		fwrite(":", sizeof(char), 1, tcp_log_file);
+	}
+    fwrite(buff, sizeof(char), strlen(buff), tcp_log_file);
+	fflush(tcp_log_file);
+}
+
+void
+tcp_ip_refresh_tcp_log_file() {
+
+    tcp_log_file = freopen(NULL, "w", tcp_log_file);
+}
+
+#define tcp_trace(node, intf, buff)	\
+	tcp_trace_internal(node, intf, buff, __FUNCTION__, __LINE__);
+
+void
+tcp_ip_toggle_global_console_logging(void) {
+
+    topo->gstdout  = ! topo->gstdout;
+
+    if (topo->gstdout) {
+        printf ("\nconsole logging enabled\n");
+    }
+    else {
+        printf ("\nconsole logging disabled\n");
+    }
 }

@@ -37,7 +37,7 @@ nfc_intf_register_for_events(nfc_app_cb app_cb){
 	memset(&nfce_template, 0 , sizeof(notif_chain_elem_t));
 
 	nfce_template.app_cb = app_cb;
-	nfce_template.is_key_set = FALSE;
+	nfce_template.is_key_set = false;
 	init_glthread(&nfce_template.glue);
 	nfc_register_notif_chain(&nfc_intf, &nfce_template);
 }
@@ -45,13 +45,13 @@ nfc_intf_register_for_events(nfc_app_cb app_cb){
 void
 nfc_intf_invoke_notification_to_sbscribers(
 	interface_t *intf,
-	intf_nw_props_t *old_intf_nw_props,
+	intf_prop_changed_t *old_intf_prop_changed,
 	uint32_t change_flags) {
 
 	intf_notif_data_t intf_notif_data;
 	
 	intf_notif_data.interface = intf;
-	intf_notif_data.old_intf_nw_props = old_intf_nw_props;
+	intf_notif_data.old_intf_prop_changed = old_intf_prop_changed;
 	intf_notif_data.change_flags = change_flags;
 
 	nfc_invoke_notif_chain(&nfc_intf,
@@ -82,7 +82,7 @@ nfc_register_for_pkt_tracing(
 
 	memcpy(&nfce_template.key, (char *)&protocol_no, sizeof(protocol_no));
 	nfce_template.key_size = sizeof(protocol_no);
-	nfce_template.is_key_set = TRUE;
+	nfce_template.is_key_set = true;
 
 	nfce_template.app_cb = app_cb;
 	init_glthread(&nfce_template.glue);

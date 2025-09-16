@@ -10,7 +10,7 @@
  *       Revision:  none
  *       Compiler:  gcc
  *
- *         Author:  Er. Abhishek Sagar, Juniper Networks (https://csepracticals.wixsite.com/csepracticals), sachinites@gmail.com
+ *         Author:  Er. Abhishek Sagar, Juniper Networks (www.csepracticals.com), sachinites@gmail.com
  *        Company:  Juniper Networks
  *
  *        This file is part of the DDCP distribution (https://github.com/sachinites) 
@@ -23,16 +23,21 @@
  *        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  *        General Public License for more details.
  *
- *        visit website : https://csepracticals.wixsite.com/csepracticals for more courses and projects
+ *        visit website : www.csepracticals.com for more courses and projects
  *                                  
  * =====================================================================================
  */
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "ddcp.h"
-#include "serialize.h"
+#include <arpa/inet.h>
 #include "../../tcp_public.h"
+#include "ddcp.h"
+#include "ddcp_cmd_codes.h"
+#include "serialize.h"
+
+void
+init_ddcp(node_t *node);
 
 #define GET_DDCP_INTF_PROP(intf_ptr)    \
     (intf_ptr->intf_nw_props.ddcp_interface_prop)
@@ -41,7 +46,18 @@ void
 init_ddcp_interface_props(ddcp_interface_prop_t **ddcp_interface_prop){
 
     *ddcp_interface_prop = calloc(1, sizeof(ddcp_interface_prop_t));
-    (*ddcp_interface_prop)->is_enabled = TRUE;
+    (*ddcp_interface_prop)->is_enabled = true;
+}
+
+static bool
+ddcp_is_enabled_on_node(node_t *node) {
+
+    if (node->node_nw_prop.ddcp_db ) {
+
+        return true;
+    }
+
+    return false;
 }
 
 void
@@ -49,7 +65,7 @@ ddcp_send_ddcp_query_out(char *pkt,
                          uint32_t pkt_size,
                          interface_t *oif){
 
-    if(is_interface_ddcp_enabled(GET_DDCP_INTF_PROP(oif)) == FALSE) return;
+    if(ddcp_is_enabled_on_interface(GET_DDCP_INTF_PROP(oif)) == false) return;
     if(!IS_INTF_L3_MODE(oif)) return;
     send_pkt_out(pkt, pkt_size, oif);
 }
@@ -308,15 +324,14 @@ ddcp_process_ddcp_query(node_t *node,
     return copy_buffer;
 }
 
-static void
+void
 ddcp_process_ddcp_query_msg(void *arg, size_t arg_size){
 
     char *pkt;
     node_t *node;
-    uint32_t flags;
     interface_t *iif;
     uint32_t pkt_size;
-    uint32_t protocol_no;
+	hdr_type_t hdr_code;
 
     pkt_notif_data_t *pkt_notif_data;
 
@@ -325,16 +340,16 @@ ddcp_process_ddcp_query_msg(void *arg, size_t arg_size){
     node        = pkt_notif_data->recv_node;
     iif         = pkt_notif_data->recv_interface;
     pkt         = pkt_notif_data->pkt;
-    flags       = pkt_notif_data->flags;
     pkt_size    = pkt_notif_data->pkt_size;
-    protocol_no = pkt_notif_data->protocol_no;
-
+	hdr_code    = pkt_notif_data->hdr_code;	
 
     char l5_protocol;
     char *ddcp_reply_msg = NULL;
     uint32_t output_buff_len = 0;
-    ethernet_hdr_t *ethernet_hdr = (ethernet_hdr_t *)pkt;
 
+	assert(hdr_code == ETH_HDR);
+ 
+    ethernet_hdr_t *ethernet_hdr = (ethernet_hdr_t *)pkt;
     
     assert(ethernet_hdr->type == DDCP_MSG_TYPE_FLOOD_QUERY);
 
@@ -458,15 +473,14 @@ ddcp_add_or_update_ddcp_reply_msg(node_t *node,
 }
 
 
-static void
+void
 ddcp_process_ddcp_reply_msg(void *arg, size_t arg_size){
 
     char *pkt;
     node_t *node;
-    uint32_t flags;
     interface_t *recv_intf;
     uint32_t pkt_size;
-    uint32_t protocol_no;
+	hdr_type_t hdr_code;
 
     pkt_notif_data_t *pkt_notif_data;
 
@@ -475,11 +489,13 @@ ddcp_process_ddcp_reply_msg(void *arg, size_t arg_size){
     node        = pkt_notif_data->recv_node;
     recv_intf   = pkt_notif_data->recv_interface;
     pkt         = pkt_notif_data->pkt;
-    flags       = pkt_notif_data->flags;
     pkt_size    = pkt_notif_data->pkt_size;
-    protocol_no = pkt_notif_data->protocol_no;
+	hdr_code    = pkt_notif_data->hdr_code;
 
-    ddcp_add_or_update_ddcp_reply_msg(node, pkt);
+	assert(hdr_code == ETH_HDR);
+	ethernet_hdr_t *eth_hdr = (ethernet_hdr_t *)pkt;
+	ip_hdr_t *ip_hdr = (ip_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr);
+    ddcp_add_or_update_ddcp_reply_msg(node, INCREMENT_IPHDR(ip_hdr));
 }
 
 /*DDCP Query Database*/
@@ -535,7 +551,7 @@ ddcp_update_ddcp_db_self_query_info(node_t *node){
     return ddcp_db_query_node->seq_no;
 }
 
-bool_t
+bool
 ddcp_db_should_process_ddcp_query(node_t *node, 
                                   interface_t *iif,
                                   uint32_t originator_ip,
@@ -545,8 +561,8 @@ ddcp_db_should_process_ddcp_query(node_t *node,
     inet_pton(AF_INET, NODE_LO_ADDR(node), &addr_int);
     addr_int = htonl(addr_int);
    
-    if(is_interface_ddcp_enabled(GET_DDCP_INTF_PROP(iif)) == FALSE){
-        return FALSE;
+    if(ddcp_is_enabled_on_interface(GET_DDCP_INTF_PROP(iif)) == false){
+        return false;
     }
 
     ddcp_db_query_node_t *ddcp_db_query_node = 
@@ -565,19 +581,19 @@ ddcp_db_should_process_ddcp_query(node_t *node,
         init_glthread(&ddcp_db_query_node->ddcp_db_query_node_glue);
         glthread_add_next(GET_NODE_DDCP_DB_HEAD(node),
                 &ddcp_db_query_node->ddcp_db_query_node_glue);
-        return TRUE;
+        return true;
     }
 
     if(ddcp_db_query_node->seq_no < seq_no){
         ddcp_db_query_node->seq_no = seq_no;
-        return TRUE;
+        return true;
     }
 
     if(ddcp_db_query_node->seq_no >= seq_no){
-        return FALSE;
+        return false;
     }
 
-    return FALSE;
+    return false;
 }
 
 void
@@ -585,7 +601,9 @@ ddcp_print_ddcp_reply_msgs_db(node_t *node){
 
     glthread_t *curr;
     ddcp_reply_msg_t *ddcp_reply_msg = NULL;
-    
+   
+    if (!ddcp_is_enabled_on_node(node)) return;
+
     ITERATE_GLTHREAD_BEGIN(GET_NODE_DDCP_DB_REPLY_HEAD(node), curr){
 
         ddcp_reply_msg = ddcp_db_reply_node_glue_to_ddcp_reply_msg(curr);
@@ -683,27 +701,290 @@ ddcp_trigger_default_ddcp_query(node_t *node, int ddcp_q_interval){
         ddcp_pkt_meta_data->pkt_size = ethernet_hdr_size;
         
         (GET_NODE_DDCP_DB(node))->periodic_ddcp_query_wt_elem = 
-                register_app_event(wt,
+                timer_register_app_event(wt,
                 wrapper_ddcp_flood_ddcp_query_out,
                 (void *)ddcp_pkt_meta_data,
                 sizeof(ddcp_pkt_meta_data_t),
-                ddcp_q_interval,
+                ddcp_q_interval * 1000,
                 1);
     }
 }
 
-void
-init_ddcp(){
+/* DDCP pkt Trap functions */
+bool
+ddcp_trap_l2_pkt_rule(char *pkt, size_t pkt_size) {
 
-    tcp_app_register_l2_protocol_interest(DDCP_MSG_TYPE_FLOOD_QUERY,
-        ddcp_process_ddcp_query_msg);
+	ethernet_hdr_t *eth_hdr = (ethernet_hdr_t *)pkt;
+	/* DDCP is an application, hence, it is guaranteed that
+	 * pkt is vlan untagged, because hosts are vlan unaware.
+	 * DDCP as an application runs only on hosts/L3 routers*/
+	assert (!is_pkt_vlan_tagged(eth_hdr));
 
-    tcp_ip_stack_register_l2_proto_for_l2_hdr_inclusion(DDCP_MSG_TYPE_FLOOD_QUERY); 
-
-
-    tcp_app_register_l3_protocol_interest(DDCP_MSG_TYPE_UCAST_REPLY,
-        ddcp_process_ddcp_reply_msg);
-
-    //tcp_ip_stack_register_l3_proto_for_l3_hdr_inclusion(DDCP_MSG_TYPE_UCAST_REPLY);
+	if (eth_hdr->type == DDCP_MSG_TYPE_FLOOD_QUERY) {
+		return true;
+	}
+	return false;
 }
 
+bool
+ddcp_trap_l3_pkt_rule(char *pkt, size_t pkt_size) {
+
+	ethernet_hdr_t *eth_hdr = (ethernet_hdr_t *)pkt;
+
+    /* DDCP is an application, hence, it is guaranteed that
+	 * pkt is vlan untagged, because hosts are vlan unaware.
+ 	 * DDCP as an application runs only on hosts/L3 routers*/
+	assert (!is_pkt_vlan_tagged(eth_hdr));
+
+	if (eth_hdr->type != ETH_IP) {
+		return false;
+	}
+
+	ip_hdr_t *ip_hdr = (ip_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr);
+
+	if (ip_hdr->protocol == DDCP_MSG_TYPE_UCAST_REPLY) {
+		return true;
+	}
+	return false;
+}
+
+static void
+ddcp_cleanup_interface_state(interface_t *intf) {
+
+
+}
+
+static void
+ddcp_cleanup_node_state(node_t *node) {
+
+
+}
+
+static void
+ddcp_init(node_t *node){
+
+    if (!node->node_nw_prop.ddcp_db) {
+#if 0 
+        tcp_stack_register_l2_pkt_trap_rule(
+			node, ddcp_trap_l2_pkt_rule, ddcp_process_ddcp_query_msg);
+
+		nf_register_netfilter_hook(node, NF_IP_LOCAL_IN,
+			ddcp_trap_l3_pkt_rule, ddcp_process_ddcp_reply_msg);
+#endif
+        init_ddcp_query_db(&node->node_nw_prop.ddcp_db);
+	}
+}
+
+static void
+ddcp_de_init(node_t *node){
+
+    if (node->node_nw_prop.ddcp_db) {
+#if 0
+        tcp_stack_de_register_l2_pkt_trap_rule(
+                node, ddcp_trap_l2_pkt_rule, ddcp_process_ddcp_query_msg);
+
+        nf_de_register_netfilter_hook(node, NF_IP_LOCAL_IN,
+                ddcp_trap_l3_pkt_rule, ddcp_process_ddcp_reply_msg);
+#endif
+        ddcp_cleanup_node_state(node);
+    }
+}
+
+/* CLIs */
+
+int
+ddcp_validate_query_interval(char *ddcp_q_interval){
+
+    int ddcp_q_intvl = atoi(ddcp_q_interval);
+    if(ddcp_q_intvl < 1){
+        printf("Error : Invalid Value, expected > 1\n");
+        return VALIDATION_FAILED;
+    }
+    return VALIDATION_SUCCESS;
+}
+
+int
+ddcp_handler(param_t *param, ser_buff_t *tlv_buf,
+             op_mode enable_or_disable){
+
+   int CMDCODE = -1;
+   node_t *node = NULL;
+   char *node_name = NULL;
+   char *intf_name = NULL;
+   int ddcp_q_interval = 0 ;
+   interface_t *intf = NULL;
+
+   CMDCODE = EXTRACT_CMD_CODE(tlv_buf);
+
+   tlv_struct_t *tlv = NULL;
+
+   TLV_LOOP_BEGIN(tlv_buf, tlv){
+
+        if  (strncmp(tlv->leaf_id, "node-name", strlen("node-name")) ==0)
+            node_name = tlv->value;
+        else if(strncmp(tlv->leaf_id, "ddcp-q-interval", strlen("ddcp-q-interval")) == 0)
+            ddcp_q_interval = atoi(tlv->value);
+        else if(strncmp(tlv->leaf_id, "if-name", strlen("if-name")) == 0)
+            intf_name = tlv->value;
+        else
+            assert(0);
+   } TLV_LOOP_END;
+
+
+   node = node_get_node_by_name(topo, node_name);
+
+    switch(CMDCODE){
+		case CMDCODE_CONF_NODE_DDCP_PROTO:
+		switch(enable_or_disable) {
+
+			case CONFIG_ENABLE:
+				ddcp_init(node);
+				break;
+			case CONFIG_DISABLE:
+				ddcp_de_init(node);
+				break;
+			default: ;
+		}
+		break;
+        case CMDCODE_RUN_DDCP_QUERY:
+        case CMDCODE_RUN_DDCP_QUERY_PERIODIC:
+            if(!ddcp_is_enabled_on_node(node)) {
+                printf("Node %s : DDCP protocol not operational\n",
+                        node->node_name);
+                break;
+            }
+            ddcp_trigger_default_ddcp_query(node, ddcp_q_interval);
+            break;
+        case CMDCODE_SHOW_DDCP_DB:
+            ddcp_print_ddcp_reply_msgs_db(node);
+            break;
+        case CMDCODE_CONF_NODE_DDCP_PROTO_INTF_ENABLE:
+            switch(enable_or_disable) {
+			case CONFIG_ENABLE:
+                if(!ddcp_is_enabled_on_node(node)) {
+                    printf("Node %s : DDCP protocol not operational\n",
+                            node->node_name);
+                    break;
+                }
+                intf = node_get_intf_by_name(node, intf_name);
+                if(!intf) {
+                    printf("Error : Non Existing interface\n");
+                    return -1;
+                }
+                if (!GET_DDCP_INTF_PROP(intf)) {
+                    init_ddcp_interface_props(&(GET_DDCP_INTF_PROP(intf)));
+                }
+                else if(GET_DDCP_INTF_PROP(intf)->is_enabled == false) {
+                    GET_DDCP_INTF_PROP(intf)->is_enabled = true;
+                }
+				break;
+			case CONFIG_DISABLE:
+                intf = node_get_intf_by_name(node, intf_name);
+                if(!intf) {
+                    printf("Error : Non Existing interface\n");
+                    return -1;
+                }
+                if(GET_DDCP_INTF_PROP(intf)) {
+                    free(GET_DDCP_INTF_PROP(intf));
+                    GET_DDCP_INTF_PROP(intf) = NULL;
+                }
+				break;
+			default: ;		
+            }
+            break;
+        case CMDCODE_CONF_NODE_DDCP_PROTO_INTF_ALL_ENABLE:
+            break;
+        default:
+            ;
+    }
+    return 0;
+}
+
+extern void
+display_node_interfaces(param_t *param, ser_buff_t *tlv_buf);
+
+/* conf node <node-name> protocol ... */
+int
+ddcp_config_cli_tree(param_t *param) {
+
+	{
+		static param_t ddcp_proto;
+		init_param(&ddcp_proto, CMD, "ddcp", ddcp_handler, 0, INVALID, 0, "ddcp protocol");
+		libcli_register_param(param, &ddcp_proto);
+		set_param_cmd_code(&ddcp_proto, CMDCODE_CONF_NODE_DDCP_PROTO);
+        {
+            /* conf node <node-name> [no] protocol ddcp interface ... */
+            static param_t interface;
+            init_param(&interface, CMD, "interface", 0, 0, INVALID, 0, "interface");
+            libcli_register_display_callback(&interface, display_node_interfaces);
+            libcli_register_param(&ddcp_proto, &interface);
+            {
+                /*  conf node <node-name> [no] protocol ddcp interface <intf-name> */
+                static param_t if_name;
+                init_param(&if_name, LEAF, 0, ddcp_handler, 0, STRING, "if-name",
+                        ("Interface Name"));
+                libcli_register_param(&interface, &if_name);
+                set_param_cmd_code(&if_name, CMDCODE_CONF_NODE_DDCP_PROTO_INTF_ENABLE);
+            }
+            {
+                /*  conf node <node-name> [no] protocol ddcp interface all */
+                static param_t all;
+                init_param(&all, CMD, "all", ddcp_handler, 0, INVALID, 0,
+                        ("All Interfaces"));
+                libcli_register_param(&interface, &all);
+                set_param_cmd_code(&all, CMDCODE_CONF_NODE_DDCP_PROTO_INTF_ALL_ENABLE);
+            }
+        }
+	}
+	return 0;
+}
+
+/* show node <node-name> protocol ... */
+int
+ddcp_show_cli_tree(param_t *param) {
+
+    {
+        /* show node <node-name> protocol ddcp ... */
+        static param_t ddcp_proto;
+        init_param(&ddcp_proto, CMD, "ddcp", 0, 0, INVALID, 0, "ddcp protocol");
+        libcli_register_param(param, &ddcp_proto);
+        {
+            /*  show node <node-name> protocol ddcp ddcp-db */
+            static param_t ddcp_db;
+            init_param(&ddcp_db, CMD, "ddcp-db", ddcp_handler, 0, INVALID, 0, "Dump DDCP database");
+            libcli_register_param(&ddcp_proto, &ddcp_db);
+            set_param_cmd_code(&ddcp_db, CMDCODE_SHOW_DDCP_DB);
+        }
+    }
+}
+
+/* run node  <node-name> protocol ... */
+int
+ddcp_run_cli_tree(param_t *param) {
+
+    {
+        /* run node <node-name> protocol ddcp ... */
+        static param_t ddcp_proto;
+        init_param(&ddcp_proto, CMD, "ddcp", 0, 0, INVALID, 0, "ddcp protocol");
+        libcli_register_param(param, &ddcp_proto);
+        {
+            /* run node <node-name> protocol ddcp ddcp-query*/
+            static param_t ddcp_query;
+            init_param(&ddcp_query, CMD, "ddcp-query", ddcp_handler, 0, INVALID, 0, "Trigger DDCP Query Flood");
+            libcli_register_param(&ddcp_proto, &ddcp_query);
+            set_param_cmd_code(&ddcp_query, CMDCODE_RUN_DDCP_QUERY);
+            {
+                static param_t periodic;
+                init_param(&periodic, CMD, "periodic", 0, 0, INVALID, 0, "Periodic ddcp Query");
+                libcli_register_param(&ddcp_query, &periodic);
+                {
+                    static param_t ddcp_q_interval;
+                    init_param(&ddcp_q_interval, LEAF, 0, ddcp_handler, ddcp_validate_query_interval,
+                            INT, "ddcp-q-interval", "ddcp query interval(min 1 sec)");
+                    libcli_register_param(&periodic, &ddcp_q_interval);
+                    set_param_cmd_code(&ddcp_q_interval, CMDCODE_RUN_DDCP_QUERY_PERIODIC);
+                }
+            }
+        } 
+    }
+}

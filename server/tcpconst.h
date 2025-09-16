@@ -33,10 +33,18 @@
 #ifndef __TCPCONST__
 #define __TCPCONST__
 
+#include <stdint.h>
+
+typedef enum{
+
+    ETH_HDR,
+    IP_HDR
+} hdr_type_t;
+
 /*Specified in ethernet_hdr->type*/
 #define ARP_BROAD_REQ   1
 #define ARP_REPLY       2
-#define ARP_MSG         806
+#define PROTO_ARP         806
 #define BROADCAST_MAC   0xFFFFFFFFFFFF
 #define ETH_IP          0x0800
 #define ICMP_PRO        1
@@ -49,20 +57,34 @@
 #define NMP_HELLO_MSG_CODE	13 /*Randomly chosen*/
 #define INTF_MAX_METRIC     16777215 /*Choosen as per the standard = 2^24 -1*/
 #define INTF_METRIC_DEFAULT 1
+#define TCP_LOG_BUFFER_LEN	256
+ /* Should be less than or equal to UT_PARSER_BUFF_MAX_SIZE */
+#define NODE_PRINT_BUFF_LEN (2048 * 10)
 
 /*Add DDCP Protocol Numbers*/
 #define DDCP_MSG_TYPE_FLOOD_QUERY    1  /*Randomly chosen, should not exceed 2^16 -1*/
 #define DDCP_MSG_TYPE_UCAST_REPLY    2  /*Randomly chosen, must not exceed 255*/
-#define PKT_BUFFER_RIGHT_ROOM        128
+#define PKT_BUFFER_RIGHT_ROOM        128   
 #define MAX_NXT_HOPS        4
 
-#define IP_HDR_INCLUDED (1  << 0)
-#define DATA_LINK_HDR_INCLUDED  (1 << 1)
 
+/* Protocol IDs*/
+#define PROTO_STATIC 1
+#define PROTO_ISIS       0x83
 
-/*Dynamic Registration of Protocol with TCP/IP stack*/
-#define MAX_L2_PROTO_INCLUSION_SUPPORTED    16
-#define MAX_L3_PROTO_INCLUSION_SUPPORTED    16
+static inline unsigned char *
+proto_name_str (uint16_t proto) {
+
+    switch(proto) {
+        case PROTO_ISIS:
+            return "isis";
+        case PROTO_STATIC:
+            return "static";
+        case PROTO_ARP:
+            return "arp";
+        default: ;
+    }
+}
 
 #endif /* __TCPCONST__ */
 

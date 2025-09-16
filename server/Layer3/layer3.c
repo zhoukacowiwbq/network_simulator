@@ -31,86 +31,47 @@
  */
 
 #include <stdio.h>
-#include "graph.h"
-#include "../Layer2/layer2.h"
-#include "layer3.h"
-#include <sys/socket.h>
+#include <arpa/inet.h> /*for inet_ntop & inet_pton*/
 #include <memory.h>
 #include <stdlib.h>
+#include "graph.h"
+#include "../Layer2/layer2.h"
+#include "../Layer5/layer5.h"
+#include "layer3.h"
 #include "tcpconst.h"
 #include "comm.h"
-#include <arpa/inet.h> /*for inet_ntop & inet_pton*/
-
-/*Layer 3 Globals : */
-
-/* to decide that whenever layer promote pkt to upper layer of
- * TCP/IP stack, should layer 3 chop-off ip hdr or handover the pkt
- * to upper layer along with ip hdr intact*/
-static uint8_t
-l3_proto_include_l3_hdr[MAX_L3_PROTO_INCLUSION_SUPPORTED];
-
-static bool_t
-should_include_l3_hdr(uint32_t L3_protocol_no){
-
-    int i = 0;
-    for( ; i < MAX_L3_PROTO_INCLUSION_SUPPORTED; i++){
-        if(l3_proto_include_l3_hdr[i] == L3_protocol_no)
-            return TRUE;
-    }
-    return FALSE;
-}
-
-void
-tcp_ip_stack_register_l3_proto_for_l3_hdr_inclusion(
-        uint8_t L3_protocol_no){
-
-    int i = 0, j = 0;
-    for( ; i < MAX_L3_PROTO_INCLUSION_SUPPORTED; i++){
-        if(l3_proto_include_l3_hdr[i] == L3_protocol_no)
-            return;
-        if(l3_proto_include_l3_hdr[i] == 0){
-            j = i;
-        }
-    }
-    if(j){
-        l3_proto_include_l3_hdr[j] = L3_protocol_no;
-        return;
-    }
-    printf("Error : Could not register L3 protocol %d for l3 Hdr inclusion",
-            L3_protocol_no);
-}
-
-void
-tcp_ip_stack_unregister_l3_proto_for_l3_hdr_inclusion(
-        uint8_t L3_protocol_no){
-
-    int i = 0;
-    for( ; i < MAX_L3_PROTO_INCLUSION_SUPPORTED; i++){
-        if(l3_proto_include_l3_hdr[i] == L3_protocol_no){
-            l3_proto_include_l3_hdr[i] = 0;
-            return;
-        }
-    }
-}
+#include "netfilter.h"
+#include "../notif.h"
+#include "rt_notif.h"
+#include "../LinuxMemoryManager/uapi_mm.h"
 
 extern void
 spf_flush_nexthops(nexthop_t **nexthop);
 
+extern void
+rt_table_kick_start_notif_job(rt_table_t *rt_table) ;
+
+extern void
+rt_table_add_route_to_notify_list (
+                rt_table_t *rt_table, 
+                l3_route_t *l3route,
+                uint8_t flag);
+
 /*L3 layer recv pkt from below Layer 2. Layer 2 hdr has been
  * chopped off already.*/
-static bool_t
+static bool
 l3_is_direct_route(l3_route_t *l3_route){
 
     return (l3_route->is_direct);
 }
 
-static bool_t
+/* 
+ * Check if dst_ip exact matches with any locally configured
+ * ip address of the router
+*/
+static bool
 is_layer3_local_delivery(node_t *node, uint32_t dst_ip){
 
-    /* Check if dst_ip exact matches with any locally configured
-     * ip address of the router*/
-
-    /*checking with node's loopback address*/
     char dest_ip_str[16];
     dest_ip_str[15] = '\0';
     char *intf_addr = NULL;
@@ -118,39 +79,34 @@ is_layer3_local_delivery(node_t *node, uint32_t dst_ip){
     dst_ip = htonl(dst_ip);
     inet_ntop(AF_INET, &dst_ip, dest_ip_str, 16);
 
+    /*checking with node's loopback address*/
     if(strncmp(NODE_LO_ADDR(node), dest_ip_str, 16) == 0)
-        return TRUE;
+        return true;
 
     /*checking with interface IP Addresses*/
-
     uint32_t i = 0;
     interface_t *intf;
 
     for( ; i < MAX_INTF_PER_NODE; i++){
         
         intf = node->intf[i];
-        if(!intf) return FALSE;
+        if(!intf) return false;
 
-        if(intf->intf_nw_props.is_ipadd_config == FALSE)
+        if(intf->intf_nw_props.is_ipadd_config == false)
             continue;
 
         intf_addr = IF_IP(intf);
 
         if(strncmp(intf_addr, dest_ip_str, 16) == 0)
-            return TRUE;
+            return true;
     }
-    return FALSE;
+    return false;
 }
 
 extern void
 promote_pkt_to_layer4(node_t *node, interface_t *recv_intf, 
                       char *l4_hdr, uint32_t pkt_size,
-                      int L4_protocol_number, uint32_t flags);
-
-extern void
-promote_pkt_to_layer5(node_t *node, interface_t *recv_intf, 
-                      char *l5_hdr, uint32_t pkt_size,
-                      uint32_t L5_protocol, uint32_t flags);
+                      int L4_protocol_number);
 
 /*import function from layer 2*/
 extern void
@@ -162,34 +118,46 @@ demote_pkt_to_layer2(node_t *node,
 
 
 static void
-layer3_ip_pkt_recv_from_layer2(node_t *node, interface_t *interface,
-        char *pkt, uint32_t pkt_size, uint32_t flags){
+layer3_ip_pkt_recv_from_layer2(node_t *node,
+							   interface_t *interface,
+					           char *pkt,
+							   uint32_t pkt_size) {
 
+    int8_t nf_result;
     char *l4_hdr, *l5_hdr;
     char dest_ip_addr[16];
     ip_hdr_t *ip_hdr = NULL;
     ethernet_hdr_t *eth_hdr = NULL;
-    bool_t include_ip_hdr;
-
-    if(flags & DATA_LINK_HDR_INCLUDED){
-        eth_hdr = (ethernet_hdr_t *)pkt;
-        ip_hdr = (ip_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr); 
-    }
-    else{
-        ip_hdr = (ip_hdr_t *)pkt;
-    }
+    
+	eth_hdr = (ethernet_hdr_t *)pkt;
+    ip_hdr = (ip_hdr_t *)GET_ETHERNET_HDR_PAYLOAD(eth_hdr); 
 
     uint32_t dst_ip = htonl(ip_hdr->dst_ip);
     inet_ntop(AF_INET, &dst_ip, dest_ip_addr, 16);
 
-    /*Implement Layer 3 forwarding functionality*/
+    nf_result = nf_invoke_netfilter_hook(
+            NF_IP_PRE_ROUTING,
+            pkt, pkt_size, node,
+            interface,
+            ETH_HDR);
 
+    switch(nf_result) {
+        case NF_ACCEPT:
+        break;
+        case NF_DROP:
+        case NF_STOLEN:
+        case NF_STOP:
+        return;
+    }
+
+    /*Implement Layer 3 forwarding functionality*/
     l3_route_t *l3_route = l3rib_lookup_lpm(NODE_RT_TABLE(node), ip_hdr->dst_ip);
 
     if(!l3_route){
         /*Router do not know what to do with the pkt. drop it*/
         printf("Router %s : Cannot Route IP : %s\n", 
                     node->node_name, dest_ip_addr);
+
         return;
     }
 
@@ -211,47 +179,31 @@ layer3_ip_pkt_recv_from_layer2(node_t *node, interface_t *interface,
             l5_hdr = l4_hdr;
 
             switch(ip_hdr->protocol){
-                /* chop off the L3 hdr and promote the pkt to transport layer. If transport Layer
-                 * Protocol is not specified, then promote the packet directly to application layer
-                 * */
                 case MTCP:
-                    include_ip_hdr = should_include_l3_hdr(ip_hdr->protocol); 
                     promote_pkt_to_layer4(node, interface, 
-                        eth_hdr ? (char *)eth_hdr : (include_ip_hdr ? (char *)ip_hdr : l4_hdr),
-                        eth_hdr ? pkt_size : include_ip_hdr ? pkt_size : IP_HDR_PAYLOAD_SIZE(ip_hdr),
-                        ip_hdr->protocol, flags | (include_ip_hdr ? IP_HDR_INCLUDED : 0));
+								(char *)eth_hdr, pkt_size, ip_hdr->protocol);
                     break;
                 case ICMP_PRO:
-                    printf("\nIP Address : %s, ping success\n", dest_ip_addr);
+                    //printf("\nIP Address : %s, ping success\n", dest_ip_addr);
                     break;
                 case IP_IN_IP:
                     /*Packet has reached ERO, now set the packet onto its new 
                       Journey from ERO to final destination*/
-                    layer3_ip_pkt_recv_from_layer2(node, interface, 
-                            (char *)INCREMENT_IPHDR(ip_hdr),
-                            IP_HDR_PAYLOAD_SIZE(ip_hdr), 0);
+                    layer3_ip_pkt_recv_from_layer2(node,
+									interface, 
+		                            (char *)INCREMENT_IPHDR(ip_hdr),
+        		                    IP_HDR_PAYLOAD_SIZE(ip_hdr));
                     return;
-                //case DDCP_MSG_TYPE_UCAST_REPLY:
-                case USERAPP1:
-                    include_ip_hdr = should_include_l3_hdr(ip_hdr->protocol);
-                    promote_pkt_to_layer5(node, interface, 
-                        eth_hdr ? (char *)eth_hdr : (include_ip_hdr ? (char *)ip_hdr : l5_hdr),
-                        eth_hdr ? pkt_size : include_ip_hdr ? pkt_size : IP_HDR_PAYLOAD_SIZE(ip_hdr),
-                        ip_hdr->protocol, flags | (include_ip_hdr) ? IP_HDR_INCLUDED : 0);
-                    break;
                 default:
-                    include_ip_hdr = should_include_l3_hdr(ip_hdr->protocol);
-                    promote_pkt_to_layer5(node, interface, 
-                        eth_hdr ? (char *)eth_hdr : include_ip_hdr ? (char *)ip_hdr : l5_hdr,
-                        eth_hdr ? pkt_size : include_ip_hdr ? pkt_size : IP_HDR_PAYLOAD_SIZE(ip_hdr),
-                        ip_hdr->protocol, flags | (include_ip_hdr) ? IP_HDR_INCLUDED : 0);
                     ;
             }
+			promote_pkt_from_layer3_to_layer5(node, interface,
+											  (char *)eth_hdr,
+											   pkt_size, ETH_HDR);
             return;
         }
         /* case 2 : It means, the dst ip address lies in direct connected
          * subnet of this router, time for l2 routing*/
-
         demote_pkt_to_layer2(
                 node,           /*Current processing node*/
                 0,              /*Dont know next hop IP as dest is present in local subnet*/
@@ -276,13 +228,45 @@ layer3_ip_pkt_recv_from_layer2(node_t *node, interface_t *interface,
     nexthop_t *nexthop = NULL;
 
     nexthop = l3_route_get_active_nexthop(l3_route);
-    assert(nexthop);
-    
+	if(!nexthop) return;
+
+    nf_result = nf_invoke_netfilter_hook(
+                    NF_IP_FORWARD,
+		            (char *)ip_hdr,
+                    pkt_size - ETH_HDR_SIZE_EXCL_PAYLOAD,
+		            node, nexthop->oif,
+                    IP_HDR);
+
+    switch (nf_result) {
+    case NF_ACCEPT:
+        break;
+    case NF_DROP:
+    case NF_STOLEN:
+    case NF_STOP:
+        return;
+    }
+
     inet_pton(AF_INET, nexthop->gw_ip, &next_hop_ip);
     next_hop_ip = htonl(next_hop_ip);
    
     tcp_dump_l3_fwding_logger(node, 
         nexthop->oif->if_name, nexthop->gw_ip);
+
+    nf_result = nf_invoke_netfilter_hook(
+                    NF_IP_POST_ROUTING,
+		            (char *)ip_hdr,
+                    pkt_size - ETH_HDR_SIZE_EXCL_PAYLOAD,
+		            node, nexthop->oif,
+                    IP_HDR);
+
+    switch (nf_result) {
+    case NF_ACCEPT:
+        break;
+    case NF_DROP:
+    case NF_STOLEN:
+    case NF_STOP:
+        return;
+    }
 
     demote_pkt_to_layer2(node, 
             next_hop_ip,
@@ -290,15 +274,27 @@ layer3_ip_pkt_recv_from_layer2(node_t *node, interface_t *interface,
             (char *)ip_hdr, pkt_size,
             ETH_IP); /*Network Layer need to tell Data link layer, 
                        what type of payload it is passing down*/
+            nexthop->hit_count++;
 }
 
 
 /*Implementing Routing Table APIs*/
 void
-init_rt_table(rt_table_t **rt_table){
+init_rt_table(node_t *node, rt_table_t **rt_table){
 
-    *rt_table = calloc(1, sizeof(rt_table_t));
+    *rt_table = XCALLOC(0, 1, rt_table_t);
     init_glthread(&((*rt_table)->route_list));
+	(*rt_table)->is_active = true;
+    strncpy( (*rt_table)->nfc_rt_updates.nfc_name, 
+                 "NFC for IPV4 RT UPDATES",
+                 sizeof((*rt_table)->nfc_rt_updates.nfc_name));
+    init_glthread(&((*rt_table)->nfc_rt_updates.notif_chain_head));
+    (*rt_table)->node = node;
+}
+
+void
+rt_table_set_active_status(rt_table_t *rt_table, bool active){
+	rt_table->is_active = active;
 }
 
 l3_route_t *
@@ -317,12 +313,14 @@ rt_table_lookup(rt_table_t *rt_table, char *ip_addr, char mask){
     } ITERATE_GLTHREAD_END(&rt_table->route_list, curr);
 }
 
-static void
+void
 l3_route_free(l3_route_t *l3_route){
 
     assert(IS_GLTHREAD_LIST_EMPTY(&l3_route->rt_glue));
+    assert(IS_GLTHREAD_LIST_EMPTY(&l3_route->notif_glue));
+    assert(IS_GLTHREAD_LIST_EMPTY(&l3_route->flash_glue));
     spf_flush_nexthops(l3_route->nexthops);
-    free(l3_route);
+    XFREE(l3_route);
 }
 
 void
@@ -337,8 +335,9 @@ clear_rt_table(rt_table_t *rt_table){
         if(l3_is_direct_route(l3_route))
             continue;
         remove_glthread(curr);
-        l3_route_free(l3_route);
+        rt_table_add_route_to_notify_list(rt_table, l3_route, RT_DEL_F);
     } ITERATE_GLTHREAD_END(&rt_table->route_list, curr);
+     rt_table_kick_start_notif_job(rt_table);
 }
 
 nexthop_t *
@@ -348,7 +347,8 @@ l3_route_get_active_nexthop(l3_route_t *l3_route){
         return NULL;
     
     nexthop_t *nexthop = l3_route->nexthops[l3_route->nxthop_idx];
-    assert(nexthop);
+
+	if(!nexthop) return NULL;
 
     l3_route->nxthop_idx++;
 
@@ -361,7 +361,7 @@ l3_route_get_active_nexthop(l3_route_t *l3_route){
 
 
 void
-delete_rt_table_entry(rt_table_t *rt_table, 
+rt_table_delete_route(rt_table_t *rt_table, 
         char *ip_addr, char mask){
 
     char dst_str_with_mask[16];
@@ -373,7 +373,8 @@ delete_rt_table_entry(rt_table_t *rt_table,
         return;
 
     remove_glthread(&l3_route->rt_glue);
-    l3_route_free(l3_route);
+    rt_table_add_route_to_notify_list (rt_table, l3_route, RT_DEL_F);
+    rt_table_kick_start_notif_job(rt_table);
 }
 
 /*Look up L3 routing table using longest prefix match*/
@@ -418,57 +419,72 @@ void
 dump_rt_table(rt_table_t *rt_table){
 
     int i = 0;
+    int count = 0;
     glthread_t *curr = NULL;
     l3_route_t *l3_route = NULL;
-    int count = 0;
+    
     printf("L3 Routing Table:\n");
+
     ITERATE_GLTHREAD_BEGIN(&rt_table->route_list, curr){
 
         l3_route = rt_glue_to_l3_route(curr);
         count++;
+		
+		if(count != 0 && (count % 20) == 0) {
+			printf("continue ?\n");
+			getchar();			
+		}
+
         if(l3_route->is_direct){
             if(count != 1){
-                printf("\t|===================|=======|====================|==============|==========|\n");
+                printf("\t|===================|=======|====================|==============|==========|============|==============|\n");
             }
             else{
-                printf("\t|======= IP ========|== M ==|======== Gw ========|===== Oif ====|== Cost ==|\n");
+                printf("\t|======= IP ========|== M ==|======== Gw ========|===== Oif ====|== Cost ==|== uptime ==|=== hits =====|\n");
             }
-            printf("\t|%-18s |  %-4d | %-18s | %-12s |          |\n", 
-                    l3_route->dest, l3_route->mask, "NA", "NA");
+            printf("\t|%-18s |  %-4d | %-18s | %-12s |          |  %-10s| 0            |\n", 
+                    l3_route->dest, l3_route->mask, "NA", "NA",
+					RT_UP_TIME(l3_route));
             continue;
         }
 
         for( i = 0; i < MAX_NXT_HOPS; i++){
-            if(l3_route->nexthops[i]){
+            if(l3_route->nexthops[i]) {
                 if(i == 0){
                     if(count != 1){
-                        printf("\t|===================|=======|====================|==============|==========|\n");
+                        printf("\t|===================|=======|====================|==============|==========|============|==============|\n");
                     }
                     else{
-                        printf("\t|======= IP ========|== M ==|======== Gw ========|===== Oif ====|== Cost ==|\n");
+                        printf("\t|======= IP ========|== M ==|======== Gw ========|===== Oif ====|== Cost ==|== uptime ==|=== hits =====|\n");
                     }
-                    printf("\t|%-18s |  %-4d | %-18s | %-12s |  %-4u    |\n", 
+                    printf("\t|%-18s |  %-4d | %-18s | %-12s |  %-4u    |  %-10s| %-8llu     |\n", 
                             l3_route->dest, l3_route->mask,
                             l3_route->nexthops[i]->gw_ip, 
-                            l3_route->nexthops[i]->oif->if_name, l3_route->spf_metric);
+                            l3_route->nexthops[i]->oif->if_name, l3_route->spf_metric,
+							RT_UP_TIME(l3_route),
+                             l3_route->nexthops[i]->hit_count);
                 }
                 else{
-                    printf("\t|                   |       | %-18s | %-12s |          |\n", 
+                    printf("\t|                   |       | %-18s | %-12s |          |  %-10s| %-8llu     |\n", 
                             l3_route->nexthops[i]->gw_ip, 
-                            l3_route->nexthops[i]->oif->if_name);
+                            l3_route->nexthops[i]->oif->if_name, "",
+                            l3_route->nexthops[i]->hit_count);
                 }
             }
         }
     } ITERATE_GLTHREAD_END(&rt_table->route_list, curr); 
-    printf("\t|===================|=======|====================|==============|==========|\n");
+    printf("\t|===================|=======|====================|==============|==========|============|==============|\n");
 }
 
-static bool_t
+static bool
 _rt_table_entry_add(rt_table_t *rt_table, l3_route_t *l3_route){
 
     init_glthread(&l3_route->rt_glue);
     glthread_add_next(&rt_table->route_list, &l3_route->rt_glue);
-    return TRUE;
+	l3_route->install_time = time(NULL);
+    rt_table_add_route_to_notify_list (rt_table, l3_route, RT_ADD_F);
+    rt_table_kick_start_notif_job(rt_table);
+    return true;
 }
 
 void
@@ -505,6 +521,44 @@ l3rib_lookup(rt_table_t *rt_table,
     return NULL;
 }
 
+/* 
+ * Insert nexthop using insertion sort on ifindex
+ * */
+static bool
+l3_route_insert_nexthop(l3_route_t *l3_route,
+						 nexthop_t *nexthop) {
+
+	int i;
+	
+	nexthop_t *temp;
+	nexthop_t **nexthop_arr;
+
+	nexthop_arr = l3_route->nexthops;
+
+	if (nexthop_arr[MAX_NXT_HOPS - 1]) {
+		
+		return false;
+	}	
+
+	nexthop_arr[MAX_NXT_HOPS - 1] = nexthop;
+	nexthop->ref_count++;
+
+	i = MAX_NXT_HOPS - 1;
+
+	while(i > 0 &&
+		 (!nexthop_arr[i-1] ||
+		    (nexthop_arr[i-1]->ifindex > 
+		     nexthop_arr[i]->ifindex))) {
+	
+		temp = nexthop_arr[i-1];
+		nexthop_arr[i-1] = nexthop_arr[i];
+		nexthop_arr[i] = temp; 
+		i--;
+	}
+	l3_route->install_time = time(NULL);
+	return true;
+}
+
 
 void
 rt_table_add_route(rt_table_t *rt_table,
@@ -514,21 +568,20 @@ rt_table_add_route(rt_table_t *rt_table,
 
    uint32_t dst_int;
    char dst_str_with_mask[16];
-   bool_t new_route = FALSE;
+   bool new_route = false;
 
-   apply_mask(dst, mask, dst_str_with_mask); 
-   inet_pton(AF_INET, dst_str_with_mask, &dst_int);
-   dst_int = htonl(dst_int);
-
+    apply_mask(dst, mask, dst_str_with_mask); 
+    dst_int = tcp_ip_covert_ip_p_to_n(dst_str_with_mask);
+   
    l3_route_t *l3_route = l3rib_lookup(rt_table, dst_int, mask);
 
    if(!l3_route){
-       l3_route = calloc(1, sizeof(l3_route_t));
+       l3_route = XCALLOC(0, 1, l3_route_t);
        strncpy(l3_route->dest, dst_str_with_mask, 16);
        l3_route->dest[15] = '\0';
        l3_route->mask = mask;
-       new_route = TRUE;
-       l3_route->is_direct = TRUE;
+       new_route = true;
+       l3_route->is_direct = true;
    }
    
    int i = 0;
@@ -555,14 +608,17 @@ rt_table_add_route(rt_table_t *rt_table,
    }
 
    if(gw && oif){
-        nexthop_t *nexthop = calloc(1, sizeof(nexthop_t));
-        l3_route->nexthops[i] = nexthop;
-        l3_route->is_direct = FALSE;
+        nexthop_t *nexthop = XCALLOC(0, 1, nexthop_t);
+        l3_route->is_direct = false;
         l3_route->spf_metric = spf_metric;
-        nexthop->ref_count++;
         strncpy(nexthop->gw_ip, gw, 16);
         nexthop->gw_ip[15] = '\0';
         nexthop->oif = oif;
+		l3_route_insert_nexthop(l3_route, nexthop);
+        if (!new_route) {
+            rt_table_add_route_to_notify_list (rt_table, l3_route, RT_UPDATE_F);
+            rt_table_kick_start_notif_job(rt_table);
+        }
    }
 
    if(new_route){
@@ -577,16 +633,13 @@ rt_table_add_route(rt_table_t *rt_table,
 static void
 _layer3_pkt_recv_from_layer2(node_t *node, interface_t *interface,
                             char *pkt, uint32_t pkt_size, 
-                            int L3_protocol_type, uint32_t flags){
+                            int L3_protocol_type) {
 
     switch(L3_protocol_type){
         
         case ETH_IP:
         case IP_IN_IP:
-#if 0
-        case DDCP_MSG_TYPE_UCAST_REPLY:
-#endif
-            layer3_ip_pkt_recv_from_layer2(node, interface, pkt, pkt_size, flags);
+            layer3_ip_pkt_recv_from_layer2(node, interface, pkt, pkt_size);
             break;
         default:
             ;
@@ -599,27 +652,29 @@ void
 promote_pkt_to_layer3(node_t *node,            /*Current node on which the pkt is received*/
                       interface_t *interface,  /*ingress interface*/
                       char *pkt, uint32_t pkt_size, /*L3 payload*/
-                      int L3_protocol_number, uint32_t flags){  /*obtained from eth_hdr->type field*/
-
-        _layer3_pkt_recv_from_layer2(node, interface, pkt, pkt_size, L3_protocol_number, flags);
+                      int L3_protocol_number) {  /*obtained from eth_hdr->type field*/
+	
+	_layer3_pkt_recv_from_layer2(node, interface,
+				pkt, pkt_size,
+				L3_protocol_number);
 }
 
 /* An API to be used by L4 or L5 to push the pkt down the TCP/IP
  * stack to layer 3*/
 void
 demote_packet_to_layer3(node_t *node, 
-                        char *pkt, uint32_t size,
-                        int protocol_number, /*L4 or L5 protocol type*/
-                        uint32_t dest_ip_address){
+                                           char *pkt,
+                                           uint32_t size,
+                                           int protocol_number, /*L4 or L5 protocol type*/
+                                           uint32_t dest_ip_address){
+
     ip_hdr_t iphdr;
     initialize_ip_hdr(&iphdr);  
       
     /*Now fill the non-default fields*/
     iphdr.protocol = protocol_number;
 
-    uint32_t addr_int = 0;
-    inet_pton(AF_INET, NODE_LO_ADDR(node), &addr_int);
-    addr_int = htonl(addr_int);
+    uint32_t addr_int =  tcp_ip_covert_ip_p_to_n(NODE_LO_ADDR(node));
     iphdr.src_ip = addr_int;
     iphdr.dst_ip = dest_ip_address;
 
@@ -629,33 +684,49 @@ demote_packet_to_layer3(node_t *node,
     uint32_t new_pkt_size = 0 ;
 
     new_pkt_size = IP_HDR_TOTAL_LEN_IN_BYTES((&iphdr));
-    new_pkt = calloc(1, MAX_PACKET_BUFFER_SIZE);
+    new_pkt = tcp_ip_get_new_pkt_buffer (new_pkt_size);
 
     memcpy(new_pkt, (char *)&iphdr, IP_HDR_LEN_IN_BYTES((&iphdr)));
 
-    if(pkt && size)
+    if(pkt && size) {
         memcpy(new_pkt + IP_HDR_LEN_IN_BYTES((&iphdr)), pkt, size);
+    }
 
     /*Now Resolve Next hop*/
     l3_route_t *l3_route = l3rib_lookup_lpm(NODE_RT_TABLE(node), 
-                                iphdr.dst_ip);
+                                          iphdr.dst_ip);
     
     if(!l3_route){
-        printf("Node : %s : No L3 route\n",  node->node_name);   
-		free(new_pkt);
+        printf("Node : %s : No L3 route %s\n",
+			node->node_name, tcp_ip_covert_ip_n_to_p(iphdr.dst_ip, 0));   
+		tcp_ip_free_pkt_buffer(new_pkt, new_pkt_size);
         return;
     }
 
-    bool_t is_direct_route = l3_is_direct_route(l3_route);
+    bool is_direct_route = l3_is_direct_route(l3_route);
     
-    char *shifted_pkt_buffer = pkt_buffer_shift_right(new_pkt, 
-                    new_pkt_size, MAX_PACKET_BUFFER_SIZE);
-
     if(is_direct_route){
+
+        int8_t nf_result = nf_invoke_netfilter_hook(
+                NF_IP_LOCAL_OUT,
+				new_pkt,
+                new_pkt_size,
+				node, NULL,
+                IP_HDR);
+
+        switch (nf_result) {
+        case NF_ACCEPT:
+            break;
+        case NF_DROP:
+        case NF_STOLEN:
+        case NF_STOP:
+            return;
+        }
+
         demote_pkt_to_layer2(node,
                          dest_ip_address,
                          0,
-                         shifted_pkt_buffer, new_pkt_size,
+                         new_pkt, new_pkt_size,
                          ETH_IP);
         return;
     }
@@ -668,7 +739,7 @@ demote_packet_to_layer3(node_t *node,
     nexthop = l3_route_get_active_nexthop(l3_route);
     
     if(!nexthop){
-        free(new_pkt);
+        tcp_ip_free_pkt_buffer(new_pkt, new_pkt_size);
         return;
     }
     
@@ -678,12 +749,32 @@ demote_packet_to_layer3(node_t *node,
     tcp_dump_l3_fwding_logger(node,
         nexthop->oif->if_name, nexthop->gw_ip);
 
+    int8_t nf_result = nf_invoke_netfilter_hook(
+            NF_IP_LOCAL_OUT,
+			new_pkt,
+            new_pkt_size,
+			node, nexthop->oif,
+            IP_HDR);
+
+    switch (nf_result) {
+    case NF_ACCEPT:
+        break;
+    case NF_DROP:
+    case NF_STOLEN:
+    case NF_STOP:
+        tcp_ip_free_pkt_buffer(new_pkt, new_pkt_size);
+        return;
+    }
+
     demote_pkt_to_layer2(node,
             next_hop_ip,
             nexthop->oif->if_name,
-            shifted_pkt_buffer, new_pkt_size,
+            new_pkt, new_pkt_size,
             ETH_IP);
-    free(new_pkt);
+
+    nexthop->hit_count++;
+
+    tcp_ip_free_pkt_buffer(new_pkt, new_pkt_size);
 }
 
 /* This fn sends a dummy packet to test L3 and L2 routing
@@ -711,7 +802,7 @@ layer3_ero_ping_fn(node_t *node, char *dst_ip_addr,
 
     /*Prepare the payload and push it down to the network layer.
      The payload shall be inner ip hdr*/
-    ip_hdr_t *inner_ip_hdr = calloc(1, sizeof(ip_hdr_t));
+    ip_hdr_t *inner_ip_hdr = XCALLOC(0, 1, ip_hdr_t);
     initialize_ip_hdr(inner_ip_hdr);
     inner_ip_hdr->total_length = sizeof(ip_hdr_t)/4;
     inner_ip_hdr->protocol = ICMP_PRO;
@@ -733,7 +824,7 @@ layer3_ero_ping_fn(node_t *node, char *dst_ip_addr,
     demote_packet_to_layer3(node, (char *)inner_ip_hdr, 
                             inner_ip_hdr->total_length * 4, 
                             IP_IN_IP, addr_int);
-    free(inner_ip_hdr);
+    XFREE(inner_ip_hdr);
 }
 
 /*Wrapper fn to be used by Applications*/
@@ -743,4 +834,95 @@ tcp_ip_send_ip_data(node_t *node, char *app_data, uint32_t data_size,
 
     demote_packet_to_layer3(node, app_data, data_size,
             L5_protocol_id, dest_ip_address);
+}
+
+void
+interface_set_ip_addr(node_t *node, interface_t *intf, 
+                                    char *intf_ip_addr, uint8_t mask) {
+
+    uint32_t ip_addr_int;
+    uint32_t if_change_flags = 0;
+    intf_prop_changed_t intf_prop_changed;
+
+    if (IS_INTF_L2_MODE(intf)) {
+        printf("Error : Remove L2 config from interface first\n");
+        return;
+    }
+
+    /* new config */
+    if ( !IF_IP_EXIST(intf)) {
+        strncpy(IF_IP(intf), intf_ip_addr, 16);
+        IF_MASK(intf) = mask;
+        IF_IP_EXIST(intf) = true;
+
+        SET_BIT(if_change_flags, IF_IP_ADDR_CHANGE_F);
+        ip_addr_int = tcp_ip_covert_ip_p_to_n(intf_ip_addr);
+        intf_prop_changed.ip_addr.ip_addr = 0;
+        intf_prop_changed.ip_addr.mask = 0;
+        rt_table_add_direct_route(NODE_RT_TABLE(node), intf_ip_addr, mask);
+
+        nfc_intf_invoke_notification_to_sbscribers(intf,  
+                &intf_prop_changed, if_change_flags);
+        return;
+    }
+
+    /* Existing config changed */
+    if (strncmp(IF_IP(intf), intf_ip_addr, 16) || 
+            IF_MASK(intf) != mask ) {
+
+        ip_addr_int = tcp_ip_covert_ip_p_to_n(IF_IP(intf));
+        intf_prop_changed.ip_addr.ip_addr = ip_addr_int;
+        intf_prop_changed.ip_addr.mask = IF_MASK(intf);
+        SET_BIT(if_change_flags, IF_IP_ADDR_CHANGE_F);
+        rt_table_delete_route(NODE_RT_TABLE(node),  IF_IP(intf), IF_MASK(intf));
+        strncpy(IF_IP(intf), intf_ip_addr, 16);
+        IF_MASK(intf) = mask;
+        rt_table_add_direct_route(NODE_RT_TABLE(node), IF_IP(intf), IF_MASK(intf));
+
+         nfc_intf_invoke_notification_to_sbscribers(intf,  
+                &intf_prop_changed, if_change_flags);
+    }
+}
+
+void
+interface_unset_ip_addr(node_t *node, interface_t *intf, 
+                                        char *new_intf_ip_addr, uint8_t new_mask) {
+
+    uint8_t mask;
+    uint32_t ip_addr_int;
+    uint32_t if_change_flags = 0;
+    intf_prop_changed_t intf_prop_changed;
+
+    if ( !IF_IP_EXIST(intf)) {
+        return;
+    }
+
+    if (strncmp(IF_IP(intf), new_intf_ip_addr, 16)  ||
+            IF_MASK(intf) != new_mask) {
+
+        printf("Error : Non Existing IP address Specified \n");
+        return;
+    }
+
+    ip_addr_int = tcp_ip_covert_ip_p_to_n(IF_IP(intf));
+    mask = IF_MASK(intf);
+    intf_prop_changed.ip_addr.ip_addr = ip_addr_int;
+    intf_prop_changed.ip_addr.mask = mask;
+
+    IF_IP_EXIST(intf) = false;
+    SET_BIT(if_change_flags, IF_IP_ADDR_CHANGE_F);
+
+    rt_table_delete_route(NODE_RT_TABLE(node),  new_intf_ip_addr, new_mask);
+
+    nfc_intf_invoke_notification_to_sbscribers(intf,  
+                &intf_prop_changed, if_change_flags);
+}
+
+void
+layer3_mem_init() {
+
+    MM_REG_STRUCT(0, ip_hdr_t);
+    MM_REG_STRUCT(0, rt_table_t);
+    MM_REG_STRUCT(0, nexthop_t);
+    MM_REG_STRUCT(0, l3_route_t);
 }

@@ -30,15 +30,12 @@
  * =====================================================================================
  */
 
-#include "graph.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <memory.h>
+#include "graph.h"
 #include "tcp_ip_trace.h"
-
-extern void 
-init_udp_socket(node_t *node);
 
 void
 insert_link_between_two_nodes(node_t *node1,
@@ -90,9 +87,16 @@ create_new_graph(char *topology_name){
     graph->topology_name[32] = '\0';
 
     init_glthread(&graph->node_list);
-    graph->gstdout = FALSE;
+    graph->gstdout = false;
     return graph;
 }
+
+extern void
+tcp_ip_register_default_l2_pkt_trap_rules(node_t *node);
+extern void
+tcp_ip_register_default_l3_pkt_trap_rules(node_t *node);
+extern void 
+node_init_udp_socket(node_t *node);
 
 node_t *
 create_graph_node(graph_t *graph, char *node_name){
@@ -101,12 +105,26 @@ create_graph_node(graph_t *graph, char *node_name){
     strncpy(node->node_name, node_name, NODE_NAME_SIZE);
     node->node_name[NODE_NAME_SIZE] = '\0';
 
-    init_udp_socket(node);
+    node_init_udp_socket(node);
 
-    init_node_nw_prop(&node->node_nw_prop);
-    init_glthread(&node->graph_glue);
+    init_node_nw_prop(node, &node->node_nw_prop);
+
     node->spf_data = NULL;
+
     tcp_ip_init_node_log_info(node);
+
+	nf_init_netfilters(&node->nf_hook_db);
+
+	strncpy(node->layer2_proto_reg_db2.nfc_name,
+			"L2 proto registration db",
+			strlen("L2 proto registration db"));
+
+    tcp_ip_register_default_l2_pkt_trap_rules(node);
+    tcp_ip_register_default_l3_pkt_trap_rules(node);
+
+    node->print_buff = (unsigned char *)calloc(1, NODE_PRINT_BUFF_LEN);
+
+    init_glthread(&node->graph_glue);
     glthread_add_next(&graph->node_list, &node->graph_glue);
     return node;
 }
@@ -130,7 +148,9 @@ void dump_node(node_t *node){
     unsigned int i = 0;
     interface_t *intf;
 
-    printf("Node Name = %s : \n", node->node_name);
+    printf("Node Name = %s UDP Port # : %u\n",
+        node->node_name, node->udp_port_number);
+
     for( ; i < MAX_INTF_PER_NODE; i++){
         
         intf = node->intf[i];
@@ -144,9 +164,9 @@ void dump_interface(interface_t *interface){
    link_t *link = interface->link;
    node_t *nbr_node = get_nbr_node(interface);
 
-   printf("Interface Name = %s\n\tNbr Node %s, Local Node : %s, cost = %u\n", 
+   printf("Interface Name = %s\n\tNbr Node %s, Local Node : %s, cost = %u, ifindex = %u\n", 
             interface->if_name,
             nbr_node->node_name, 
             interface->att_node->node_name, 
-            link->cost);
+            link->cost, IF_INDEX(interface));
 }

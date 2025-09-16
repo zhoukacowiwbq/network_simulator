@@ -31,7 +31,7 @@
  */
 
 /* Visit my Website for more wonderful assignments and projects :
- * https://csepracticals.wixsite.com/csepracticals
+ * www.csepracticals.com
  * if above URL dont work, then try visit : https://csepracticals.com*/
 
 #ifndef __GRAPH__
@@ -43,6 +43,7 @@
 #include "gluethread/glthread.h"
 #include "net.h"
 #include "tcp_ip_trace.h"
+#include "Layer3/netfilter.h"
 
 #define NODE_NAME_SIZE   16
 #define IF_NAME_SIZE     16
@@ -80,9 +81,11 @@ struct node_ {
 
     char node_name[NODE_NAME_SIZE];
     interface_t *intf[MAX_INTF_PER_NODE];
-    glthread_t graph_glue;
+    
+    /* For Network Sockets */
     unsigned int udp_port_number;
     int udp_sock_fd;
+
     node_nw_prop_t node_nw_prop;
 
     /*SPF Calculation*/
@@ -90,6 +93,16 @@ struct node_ {
 
     /*Node Logging*/
     log_t log_info;
+
+	/*net-filter hooks DB*/
+	nf_hook_db_t nf_hook_db;
+
+	/*L2 net-filter hook (simplified) */
+	notif_chain_t layer2_proto_reg_db2;
+    
+    unsigned char *print_buff;
+    
+    glthread_t graph_glue;
 };
 GLTHREAD_TO_STRUCT(graph_glue_to_node, node_t, graph_glue);
 
@@ -97,7 +110,7 @@ typedef struct graph_{
 
     char topology_name[32];
     glthread_t node_list;
-    bool_t gstdout;
+    bool gstdout;
 } graph_t;
 
 node_t *
@@ -140,7 +153,7 @@ get_node_intf_available_slot(node_t *node){
 }
 
 static inline interface_t *
-get_node_if_by_name(node_t *node, char *if_name){
+node_get_intf_by_name(node_t *node, char *if_name){
 
     int i ;
     interface_t *intf;
@@ -153,10 +166,10 @@ get_node_if_by_name(node_t *node, char *if_name){
         }
     }
     return NULL;
-    
 }
+
 static inline node_t *
-get_node_by_node_name(graph_t *topo, char *node_name){
+node_get_node_by_name(graph_t *topo, char *node_name){
 
     node_t *node;
     glthread_t *curr;    

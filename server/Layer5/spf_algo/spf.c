@@ -10,7 +10,7 @@
  *       Revision:  none
  *       Compiler:  gcc
  *
- *         Author:  Er. Abhishek Sagar, Juniper Networks (https://csepracticals.wixsite.com/csepracticals), sachinites@gmail.com
+ *         Author:  Er. Abhishek Sagar, Juniper Networks (www.csepracticals.com), sachinites@gmail.com
  *        Company:  Juniper Networks
  *
  *        This file is part of the TCPIP-STACK distribution (https://github.com/sachinites) 
@@ -23,13 +23,15 @@
  *        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  *        General Public License for more details.
  *
- *        visit website : https://csepracticals.wixsite.com/csepracticals for more courses and projects
+ *        visit website : www.csepracticals.com for more courses and projects
  *                                  
  * =====================================================================================
  */
 #include <stdio.h>
 #include <stdint.h>
 #include "../../tcp_public.h"
+
+extern void spf_algo_mem_init(); 
 
 #define INFINITE_METRIC     0xFFFFFFFF
 
@@ -79,7 +81,7 @@ spf_flush_nexthops(nexthop_t **nexthop){
             assert(nexthop[i]->ref_count);
             nexthop[i]->ref_count--;
             if(nexthop[i]->ref_count == 0){
-                free(nexthop[i]);
+                XFREE(nexthop[i]);
             }
             nexthop[i] = NULL;
         }
@@ -91,14 +93,14 @@ free_spf_result(spf_result_t *spf_result){
 
     spf_flush_nexthops(spf_result->nexthops);
     remove_glthread(&spf_result->spf_res_glue);
-    free(spf_result);
+    XFREE(spf_result);
 }
 
 static void
-init_node_spf_data(node_t *node, bool_t delete_spf_result){
+init_node_spf_data(node_t *node, bool delete_spf_result){
 
     if(!node->spf_data){
-        node->spf_data = calloc(1, sizeof(spf_data_t));
+        node->spf_data = XCALLOC(0, 1, spf_data_t);
         init_glthread(&node->spf_data->spf_result_head);
         node->spf_data->node = node;
     }
@@ -119,23 +121,24 @@ init_node_spf_data(node_t *node, bool_t delete_spf_result){
 }
 
 static nexthop_t *
-create_new_nexthop(interface_t *oif){
+create_new_nexthop(interface_t *oif, uint8_t proto){
 
-    nexthop_t *nexthop = calloc(1, sizeof(nexthop_t));
+    nexthop_t *nexthop = XCALLOC(0, 1, nexthop_t);
     nexthop->oif = oif;
     interface_t *other_intf = &oif->link->intf1 == oif ?    \
         &oif->link->intf2 : &oif->link->intf1;
     if(!other_intf){
-        free(nexthop);
+        XFREE(nexthop);
         return NULL;
     }
 
     strncpy(nexthop->gw_ip, IF_IP(other_intf), 16);
     nexthop->ref_count = 0;
+    nexthop->proto = proto;
     return nexthop;
 }
 
-static bool_t 
+static bool 
 spf_insert_new_nexthop(nexthop_t **nexthop_arry, 
                        nexthop_t *nxthop){
 
@@ -145,12 +148,12 @@ spf_insert_new_nexthop(nexthop_t **nexthop_arry,
         if(nexthop_arry[i]) continue;
         nexthop_arry[i] = nxthop;
         nexthop_arry[i]->ref_count++;
-        return TRUE;
+        return true;
     }
-    return FALSE;
+    return false;
 }
 
-static bool_t
+static bool
 spf_is_nexthop_exist(nexthop_t **nexthop_array, nexthop_t *nxthop){
 
     int i = 0;
@@ -160,9 +163,9 @@ spf_is_nexthop_exist(nexthop_t **nexthop_array, nexthop_t *nxthop){
             continue;
 
         if(nexthop_array[i]->oif == nxthop->oif)
-            return TRUE;
+            return true;
     }
-    return FALSE;
+    return false;
 }
 
 /*Copy all nexthops of src to dst, do not copy which are already
@@ -182,7 +185,7 @@ spf_union_nexthops_arrays(nexthop_t **src, nexthop_t **dst){
 
     for(; i < MAX_NXT_HOPS && j < MAX_NXT_HOPS; i++, j++){
 
-        if(src[i] && spf_is_nexthop_exist(dst, src[i]) == FALSE){
+        if(src[i] && spf_is_nexthop_exist(dst, src[i]) == false){
             dst[j] = src[i];
             dst[j]->ref_count++;
             copied_count++;
@@ -289,7 +292,7 @@ initialize_direct_nbrs(node_t *spf_root){
         /*Populate nexthop array of directly connected nbrs of spf_root*/
         if(get_link_cost(oif) < SPF_METRIC(nbr)){
             spf_flush_nexthops(nbr->spf_data->nexthops);
-            nexthop = create_new_nexthop(oif);
+            nexthop = create_new_nexthop(oif, PROTO_STATIC);
             spf_insert_new_nexthop(nbr->spf_data->nexthops, nexthop);
             SPF_METRIC(nbr) = get_link_cost(oif);
         }
@@ -298,7 +301,7 @@ initialize_direct_nbrs(node_t *spf_root){
         /*Step 2.2 : Begin*/
         /*Cover the ECMP case*/
         else if(get_link_cost(oif) == SPF_METRIC(nbr)){
-            nexthop = create_new_nexthop(oif);
+            nexthop = create_new_nexthop(oif, PROTO_STATIC);
             spf_insert_new_nexthop(nbr->spf_data->nexthops, nexthop);
         }
         /*Step 2.2 : End*/
@@ -319,7 +322,7 @@ spf_record_result(node_t *spf_root,
     /*Record result*/
     /*This result must not be present already*/
     assert(!spf_lookup_spf_result_by_node(spf_root, processed_node));
-    spf_result_t *spf_result = calloc(1, sizeof(spf_result_t));
+    spf_result_t *spf_result = XCALLOC(0, 1, spf_result_t);
     /*We record three things as a part of spf result for a node in 
      * topology : 
      * 1. The node itself
@@ -374,7 +377,7 @@ spf_explore_nbrs(node_t *spf_root,   /*Only used for logging*/
         printf("root : %s : Event : Testing Inequality : " 
                 " spf_metric(%s, %u) + link cost(%u) < spf_metric(%s, %u)\n",
                 spf_root->node_name, curr_node->node_name, 
-                curr_node->curr_spf_data->spf_metric, 
+                curr_node->spf_data->spf_metric, 
                 get_link_cost(oif), nbr->node_name, nbr->spf_data->spf_metric);
         #endif
         /*Step 6.1 : Begin*/
@@ -471,7 +474,7 @@ compute_spf(node_t *spf_root){
     /*Step 1 : Begin*/
     /* Clear old spf Result list from spf_root, and clear
      * any nexthop data if any*/
-    init_node_spf_data(spf_root, TRUE);
+    init_node_spf_data(spf_root, true);
     SPF_METRIC(spf_root) = 0;
 
     /* Iterate all Routers in the graph and initialize the required fields
@@ -481,7 +484,7 @@ compute_spf(node_t *spf_root){
 
         node = graph_glue_to_node(curr);
         if(node == spf_root) continue;
-        init_node_spf_data(node, FALSE);
+        init_node_spf_data(node, false);
     } ITERATE_GLTHREAD_END(&topo->node_list, curr);
     /*Step 1 : End*/
    
@@ -566,6 +569,12 @@ compute_spf(node_t *spf_root){
 }
 
 static void
+compute_spf_via_job(void *data, uint32_t data_size) {
+
+	compute_spf((node_t*)data);
+}
+
+static void
 show_spf_results(node_t *node){
 
     int i = 0, j = 0;
@@ -607,13 +616,14 @@ show_spf_results(node_t *node){
 }
 
 static void
-compute_spf_all_routers(graph_t *topo){
+compute_spf_all_nodes(graph_t *topo){
 
     glthread_t *curr;
     ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr){
 
         node_t *node = graph_glue_to_node(curr);
-        compute_spf(node);
+		task_create_new_job(node, compute_spf_via_job, TASK_ONE_SHOT);
+
     } ITERATE_GLTHREAD_END(&topo->node_list, curr);
 }
 
@@ -625,14 +635,12 @@ spf_algo_interface_update(void *arg, size_t arg_size){
 
 	uint32_t flags = intf_notif_data->change_flags;
 	interface_t *interface = intf_notif_data->interface;
-	intf_nw_props_t *old_intf_nw_props = intf_notif_data->old_intf_nw_props;
-
-
-	printf("%s() called\n", __FUNCTION__);
-
-    /*Run spf if interface is transition to up/down*/
-    if(IS_BIT_SET(flags, IF_UP_DOWN_CHANGE_F) ||
-       IS_BIT_SET(flags, IF_METRIC_CHANGE_F )) 
+     intf_prop_changed_t *intf_prop_changed = intf_notif_data->old_intf_prop_changed;
+    
+	/*Run spf if interface is transition to up/down*/
+    if ( IS_BIT_SET (flags, IF_UP_DOWN_CHANGE_F ) ||
+          IS_BIT_SET (flags, IF_METRIC_CHANGE_F )     ||
+          IS_BIT_SET (flags, IF_IP_ADDR_CHANGE_F)    )
     {
         goto RUN_SPF;
     }
@@ -644,14 +652,14 @@ RUN_SPF:
      * the node on which interface is made up/down
      * or any other intf config is changed
      * otherwise it may lead to L3 loops*/
-    compute_spf_all_routers(topo);
+    compute_spf_all_nodes(topo);
 }
 
 
 void
 init_spf_algo(){
     
-    compute_spf_all_routers(topo);
+    compute_spf_all_nodes(topo);
 	nfc_intf_register_for_events(spf_algo_interface_update);
 }
 
@@ -674,7 +682,7 @@ spf_algo_handler(param_t *param, ser_buff_t *tlv_buf,
     }TLV_LOOP_END;
 
     if(node_name){
-        node = get_node_by_node_name(topo, node_name);
+        node = node_get_node_by_name(topo, node_name);
     }
 
     switch(CMDCODE){
@@ -685,10 +693,18 @@ spf_algo_handler(param_t *param, ser_buff_t *tlv_buf,
             compute_spf(node);
             break;
         case CMDCODE_RUN_SPF_ALL:
-            compute_spf_all_routers(topo);
+            compute_spf_all_nodes(topo);
             break;
         default:
             break;
     }
     return 0;
+}
+
+
+void
+spf_algo_mem_init() {
+
+    MM_REG_STRUCT(0, spf_data_t);
+    MM_REG_STRUCT(0, spf_result_t);
 }

@@ -10,7 +10,7 @@
  *       Revision:  none
  *       Compiler:  gcc
  *
- *         Author:  Er. Abhishek Sagar, Juniper Networks (https://csepracticals.wixsite.com/csepracticals), sachinites@gmail.com
+ *         Author:  Er. Abhishek Sagar, Juniper Networks (www.csepracticals.com), sachinites@gmail.com
  *        Company:  Juniper Networks
  *
  *        This file is part of the DDCP distribution (https://github.com/sachinites) 
@@ -23,7 +23,7 @@
  *        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  *        General Public License for more details.
  *
- *        visit website : https://csepracticals.wixsite.com/csepracticals for more courses and projects
+ *        visit website : www.csepracticals.com for more courses and projects
  *                                  
  * =====================================================================================
  */
@@ -75,16 +75,17 @@ typedef struct ddcp_query_hdr_{
 
 typedef struct ddcp_interface_prop_{
 
-    bool_t is_enabled; 
+    bool is_enabled; 
 } ddcp_interface_prop_t;
 
 
 void
 init_ddcp_interface_props(ddcp_interface_prop_t **ddcp_interface_prop);
 
-static inline bool_t
-is_interface_ddcp_enabled(ddcp_interface_prop_t *ddcp_interface_prop){
+static inline bool
+ddcp_is_enabled_on_interface(ddcp_interface_prop_t *ddcp_interface_prop){
 
+    if (!ddcp_interface_prop) return false;
     return ddcp_interface_prop->is_enabled;
 }
 
@@ -124,13 +125,13 @@ typedef struct _wheel_timer_t wheel_timer_t;
 typedef struct ddcp_db_{
     glthread_t ddcp_query_head;
     glthread_t ddcp_reply_head;
-    wheel_timer_elem_t *periodic_ddcp_query_wt_elem;
+    timer_event_handle *periodic_ddcp_query_wt_elem;
 } ddcp_db_t;
 
 void
 init_ddcp_query_db(ddcp_db_t **ddcp_db);
 
-bool_t 
+bool 
 ddcp_db_should_process_ddcp_query(node_t *node, interface_t *iif, 
                                   uint32_t originator_ip,
                                   seq_t seq_no);

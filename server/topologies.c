@@ -30,19 +30,12 @@
  * =====================================================================================
  */
 /* Visit my Website for more wonderful assignments and projects :
- * https://csepracticals.wixsite.com/csepracticals
+ * www.csepracticals.com
  * if above URL dont work, then try visit : https://csepracticals.com*/
 
 #include "graph.h"
 #include "comm.h"
 #include "Layer2/layer2.h"
-#include <cjson/cJSON.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-extern void
-network_start_pkt_receiver_thread(graph_t *topo);
 
 graph_t *
 build_first_topo(){
@@ -88,8 +81,6 @@ build_first_topo(){
     node_set_loopback_address(R2_re, "122.1.1.2");
     node_set_intf_ip_address(R2_re, "eth3", "30.1.1.2", 24);
     node_set_intf_ip_address(R2_re, "eth5", "40.1.1.2", 24);
-
-    network_start_pkt_receiver_thread(topo);
 
     return topo;
 }
@@ -157,8 +148,6 @@ build_simple_l2_switch_topo(){
     node_set_intf_l2_mode(L2SW, "eth2", ACCESS);
     node_set_intf_l2_mode(L2SW, "eth3", ACCESS);
     node_set_intf_l2_mode(L2SW, "eth4", ACCESS);
-
-    network_start_pkt_receiver_thread(topo);
 
     return topo;
 }
@@ -230,8 +219,6 @@ run node R1 ping 122.1.1.3
     node_set_intf_ip_address(R4, "eth5", "30.1.1.2", 24);
     node_set_intf_ip_address(R4, "eth6", "40.1.1.1", 24);
     
-    network_start_pkt_receiver_thread(topo);
-
     return topo;
 }
 
@@ -255,8 +242,6 @@ build_linear_topo(){
     node_set_intf_ip_address(H2, "eth2", "10.1.1.2", 24);
     node_set_intf_ip_address(H2, "eth3", "20.1.1.2", 24);
     node_set_intf_ip_address(H3, "eth4", "20.1.1.1", 24);
-
-    network_start_pkt_receiver_thread(topo);
 
     return topo;
 }
@@ -329,26 +314,24 @@ build_dualswitch_topo(){
     node_set_intf_ip_address(H6, "eth11", "10.1.1.6", 24);
 
     node_set_intf_l2_mode(L2SW1, "eth2", ACCESS);
-    node_set_intf_vlan_membsership(L2SW1, "eth2", 10);
+    node_set_intf_vlan_membership(L2SW1, "eth2", 10);
     node_set_intf_l2_mode(L2SW1, "eth7", ACCESS);
-    node_set_intf_vlan_membsership(L2SW1, "eth7", 10);
+    node_set_intf_vlan_membership(L2SW1, "eth7", 10);
     node_set_intf_l2_mode(L2SW1, "eth5", TRUNK);
-    node_set_intf_vlan_membsership(L2SW1, "eth5", 10);
-    node_set_intf_vlan_membsership(L2SW1, "eth5", 11);
+    node_set_intf_vlan_membership(L2SW1, "eth5", 10);
+    node_set_intf_vlan_membership(L2SW1, "eth5", 11);
     node_set_intf_l2_mode(L2SW1, "eth6", ACCESS);
-    node_set_intf_vlan_membsership(L2SW1, "eth6", 11);
+    node_set_intf_vlan_membership(L2SW1, "eth6", 11);
 
     node_set_intf_l2_mode(L2SW2, "eth7", TRUNK);
-    node_set_intf_vlan_membsership(L2SW2, "eth7", 10);
-    node_set_intf_vlan_membsership(L2SW2, "eth7", 11);
+    node_set_intf_vlan_membership(L2SW2, "eth7", 10);
+    node_set_intf_vlan_membership(L2SW2, "eth7", 11);
     node_set_intf_l2_mode(L2SW2, "eth9", ACCESS);
-    node_set_intf_vlan_membsership(L2SW2, "eth9", 10);
+    node_set_intf_vlan_membership(L2SW2, "eth9", 10);
     node_set_intf_l2_mode(L2SW2, "eth10", ACCESS);
-    node_set_intf_vlan_membsership(L2SW2, "eth10", 10);
+    node_set_intf_vlan_membership(L2SW2, "eth10", 10);
     node_set_intf_l2_mode(L2SW2, "eth12", ACCESS);
-    node_set_intf_vlan_membsership(L2SW2, "eth12", 11);
-
-    network_start_pkt_receiver_thread(topo);
+    node_set_intf_vlan_membership(L2SW2, "eth12", 11);
 
     return topo;
 }
@@ -401,8 +384,6 @@ parallel_links_topology(){
     node_set_intf_ip_address(R1, "eth7", "30.1.1.2", 24);
     node_set_intf_ip_address(R1, "eth8", "40.1.1.2", 24);
     node_set_intf_ip_address(R1, "eth9", "50.1.1.2", 24);
-
-    network_start_pkt_receiver_thread(topo);
 
     return topo;
 }
@@ -485,188 +466,5 @@ cross_link_topology(){
     node_set_intf_ip_address(R5, "eth12","70.1.1.1", 24);
     node_set_intf_ip_address(R5, "eth15","80.1.1.2", 24);
 
-    network_start_pkt_receiver_thread(topo);
-
-    return topo;
-}
-
-char *read_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("无法打开配置文件");
-        return NULL;
-    }
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    char *data = (char *)malloc(length + 1);
-    fread(data, 1, length, file);
-    data[length] = '\0';
-    fclose(file);
-    return data;
-}
-
-intf_l2_mode_t string_to_l2_mode(const char *mode_str) {
-    if (strcmp(mode_str, "access") == 0) return ACCESS;
-    if (strcmp(mode_str, "trunk") == 0) return TRUNK;
-    return L2_MODE_UNKNOWN; // 默认值
-}
-
-graph_t *create_topology_from_json(const char *json_file_path) {
-    // 1. 读取文件
-    char *json_str = read_file(json_file_path);
-    if (!json_str) return NULL;
-
-    // 2. 解析 JSON
-    cJSON *root = cJSON_Parse(json_str);
-    if (!root) {
-        printf("JSON 解析错误: %s\n", cJSON_GetErrorPtr());
-        free(json_str);
-        return NULL;
-    }
-
-    // 3. 获取 topology
-    cJSON *topology = cJSON_GetObjectItem(root, "topology");
-    if (!topology) {
-        printf("缺少 topology 对象\n");
-        cJSON_Delete(root);
-        free(json_str);
-        return NULL;
-    }
-
-    // 4. 创建拓扑
-    cJSON *name = cJSON_GetObjectItem(topology, "name");
-    graph_t *topo = create_new_graph(cJSON_IsString(name) ? name->valuestring : "Unnamed Topology");
-
-    // 5. 创建节点
-    cJSON *nodes = cJSON_GetObjectItem(topology, "nodes");
-    if (!cJSON_IsArray(nodes)) {
-        printf("nodes 必须是数组\n");
-        cJSON_Delete(root);
-        free(json_str);
-        return NULL;
-    }
-
-    typedef struct {
-        char *name;
-        node_t *node;
-    } node_map_t;
-    node_map_t *node_map = (node_map_t *)malloc(cJSON_GetArraySize(nodes) * sizeof(node_map_t));
-    int node_count = 0;
-
-    for (int i = 0; i < cJSON_GetArraySize(nodes); i++) {
-        cJSON *node_item = cJSON_GetArrayItem(nodes, i);
-        cJSON *name = cJSON_GetObjectItem(node_item, "name");
-        if (!cJSON_IsString(name)) {
-            printf("节点 %d 缺少 name\n", i);
-            continue;
-        }
-
-        node_t *node = create_graph_node(topo, name->valuestring);
-        node_map[node_count].name = strdup(name->valuestring);
-        node_map[node_count].node = node;
-        node_count++;
-    }
-
-    // 6. 解析链路
-    cJSON *links = cJSON_GetObjectItem(topology, "links");
-    if (cJSON_IsArray(links)) {
-        for (int i = 0; i < cJSON_GetArraySize(links); i++) {
-            cJSON *link = cJSON_GetArrayItem(links, i);
-            cJSON *n1 = cJSON_GetObjectItem(link, "n1");
-            cJSON *n2 = cJSON_GetObjectItem(link, "n2");
-            cJSON *i1 = cJSON_GetObjectItem(link, "i1");
-            cJSON *i2 = cJSON_GetObjectItem(link, "i2");
-            cJSON *cost = cJSON_GetObjectItem(link, "cost");
-
-            if (!cJSON_IsString(n1) || !cJSON_IsString(n2) || !cJSON_IsString(i1) || 
-                !cJSON_IsString(i2) || !cJSON_IsNumber(cost)) {
-                printf("链路 %d 配置错误\n", i);
-                continue;
-            }
-
-            node_t *node1 = NULL, *node2 = NULL;
-            for (int j = 0; j < node_count; j++) {
-                if (strcmp(node_map[j].name, n1->valuestring) == 0) node1 = node_map[j].node;
-                if (strcmp(node_map[j].name, n2->valuestring) == 0) node2 = node_map[j].node;
-            }
-
-            if (node1 && node2) {
-                insert_link_between_two_nodes(node1, node2, i1->valuestring, i2->valuestring, cost->valueint);
-            } else {
-                printf("未找到节点 %s 或 %s\n", n1->valuestring, n2->valuestring);
-            }
-        }
-    }
-
-    // 7. 配置节点回环和接口
-    for (int i = 0; i < cJSON_GetArraySize(nodes); i++) {
-        cJSON *node_item = cJSON_GetArrayItem(nodes, i);
-        cJSON *name = cJSON_GetObjectItem(node_item, "name");
-        cJSON *loopback = cJSON_GetObjectItem(node_item, "loopback");
-
-        if (!cJSON_IsString(name) || !cJSON_IsString(loopback)) {
-            printf("节点 %d 缺少 name 或 loopback\n", i);
-            continue;
-        }
-
-        // 查找节点
-        node_t *node = NULL;
-        for (int j = 0; j < node_count; j++) {
-            if (strcmp(node_map[j].name, name->valuestring) == 0) {
-                node = node_map[j].node;
-                break;
-            }
-        }
-        if (!node) continue;
-
-        // 配置回环
-        node_set_loopback_address(node, loopback->valuestring);
-
-        // 配置接口
-        cJSON *interfaces = cJSON_GetObjectItem(node_item, "interfaces");
-        if (cJSON_IsArray(interfaces)) {
-            for (int j = 0; j < cJSON_GetArraySize(interfaces); j++) {
-                cJSON *iface = cJSON_GetArrayItem(interfaces, j);
-                cJSON *intf_name = cJSON_GetObjectItem(iface, "name");
-                cJSON *ip = cJSON_GetObjectItem(iface, "ip");
-                cJSON *ip_mask = cJSON_GetObjectItem(iface, "mask");
-                cJSON *mode = cJSON_GetObjectItem(iface, "mode");
-                cJSON *vlans = cJSON_GetObjectItem(iface, "vlans");
-
-                if (!cJSON_IsString(intf_name)) continue;
-
-                if (cJSON_IsString(ip) && strlen(ip->valuestring) > 0 && cJSON_IsNumber(ip_mask)) {
-                    char ip_addr[16];
-                    int mask = ip_mask->valueint;
-                    sscanf(ip->valuestring, "%15[^/]/%d", ip_addr, &mask);
-                    node_set_intf_ip_address(node, intf_name->valuestring, ip_addr, mask);
-                }
-
-                if (cJSON_IsString(mode) && strlen(mode->valuestring) > 0) {
-                    intf_l2_mode_t l2_mode = string_to_l2_mode(mode->valuestring);
-                    node_set_intf_l2_mode(node, intf_name->valuestring, l2_mode);
-                }
-
-                if (cJSON_IsArray(vlans)) {
-                    for (int k = 0; k < cJSON_GetArraySize(vlans); k++) {
-                        cJSON *vlan = cJSON_GetArrayItem(vlans, k);
-                        if (cJSON_IsNumber(vlan)) {
-                            node_set_intf_vlan_membsership(node, intf_name->valuestring, vlan->valueint);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 8. 清理内存
-    for (int i = 0; i < node_count; i++) free(node_map[i].name);
-    free(node_map);
-    cJSON_Delete(root);
-    free(json_str);
-
-    // 9. 启动线程
-    network_start_pkt_receiver_thread(topo);
     return topo;
 }

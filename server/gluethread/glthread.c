@@ -77,14 +77,12 @@ glthread_add_before(glthread_t *curr_glthread, glthread_t *new_glthread){
 void
 remove_glthread(glthread_t *curr_glthread){
     
-    //head
     if(!curr_glthread->left){
         if(curr_glthread->right){
             curr_glthread->right->left = NULL;
             curr_glthread->right = 0;
             return;
         }
-        //only
         return;
     }
     if(!curr_glthread->right){
@@ -175,11 +173,11 @@ glthread_priority_insert(glthread_t *glthread_head,
             continue;
         }
 
-        if(!prev)
-            glthread_add_next(glthread_head, glthread);
-        else
-            glthread_add_next(prev, glthread);
-        
+		if(!prev)
+			glthread_add_next(glthread_head, glthread);
+		else
+			glthread_add_next(prev, glthread);
+
 		return;
 
     }ITERATE_GLTHREAD_END(glthread_head, curr);
@@ -189,8 +187,8 @@ glthread_priority_insert(glthread_t *glthread_head,
 } 
 
 glthread_t *
-
 dequeue_glthread_first(glthread_t *base_glthread){
+
     glthread_t *temp;
     if(!base_glthread->right)
         return NULL;
@@ -198,6 +196,20 @@ dequeue_glthread_first(glthread_t *base_glthread){
     remove_glthread(temp);
     return temp;
 }
+
+glthread_t *
+glthread_get_last(glthread_t *curr_glthread_node) {
+
+    glthread_t *curr, *prev;
+    if (!curr_glthread_node->right) return NULL;
+
+    ITERATE_GLTHREAD_BEGIN(curr_glthread_node, curr) {
+        prev = curr;
+    } ITERATE_GLTHREAD_END (curr_glthread_node, curr)
+
+    return prev;
+}
+
 
 #if 0
 void *

@@ -9,15 +9,15 @@ typedef struct hello_{
 } hello_t;
 
 typedef struct nmp_{
-    bool_t is_enabled;
+    bool is_enabled;
 } nmp_t;
 
 typedef struct intf_nmp_{
-    bool_t is_enabled;
+    bool is_enabled;
     uint32_t sent;
     uint32_t recvd;
     uint32_t bad_hellos;
-    wheel_timer_elem_t *hellos;
+    timer_event_handle *hellos;
     glthread_t adjacency_list;
 } intf_nmp_t;
 
@@ -63,10 +63,10 @@ nmp_get_interface_state(interface_t *intf){
 }
 
 
-bool_t
+bool
 schedule_hello_on_interface(interface_t *intf,
                             int interval_sec, 
-                            bool_t is_repeat);
+                            bool is_repeat);
 
 ethernet_hdr_t *
 get_new_hello_pkt(node_t *node,
@@ -79,14 +79,14 @@ pause_interface_hellos(interface_t *interface);
 void
 stop_interface_hellos(interface_t *interface);
 
-static inline bool_t
+static inline bool
 is_hellos_scheduled_on_intf(interface_t *interface){
 
     if(interface->intf_nw_props.nmp &&
         interface->intf_nw_props.nmp->hellos)
-        return TRUE;
+        return true;
     else
-        return FALSE;
+        return false;
 }
 
 #define node_get_timer_instance(node_ptr)   \
@@ -99,7 +99,7 @@ typedef struct adjacency_{
     char nbr_ip[16];
     mac_add_t nbr_mac;
     glthread_t glue;
-    wheel_timer_elem_t *expiry_timer;
+    timer_event_handle *expiry_timer;
     time_t uptime;
 } adjacency_t;
 GLTHREAD_TO_STRUCT(glthread_to_adjacency, adjacency_t, glue);
